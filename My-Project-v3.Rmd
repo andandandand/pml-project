@@ -1,0 +1,144 @@
+---
+title: "Practical Machine Learning - Human Activity Recognition Project"
+author: "Antonio Rueda"
+date: "February 14th, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+##Intro and goal
+
+The goal of your project is to predict the manner in which they did the exercise. This is the **classe** variable in the training set. You may use any of the other variables to predict with. 
+
+You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
+
+
+
+```{r loadLibraries, echo=FALSE, results="hide"}
+library(e1071)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(corrplot)
+library(randomForest)
+```
+
+## Data download
+
+Remember to set working directory as this Rmd file's location. 
+```{r downloadFiles, echo=FALSE}
+trainingUrl <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testingUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+trainingFile <- "./data/pml-training.csv"
+testFile  <- "./data/pml-testing.csv"
+if (!file.exists("./data")) {
+  dir.create("./data")
+}
+if (!file.exists(trainingFile)) {
+  download.file(trainingUrl, destfile=trainingFile, method="curl")
+}
+if (!file.exists(testFile)) {
+  download.file(testingUrl, destfile=testFile, method="curl")
+}
+```
+
+## Setting up testing and training data frames
+
+
+```{r}
+trainingDataRaw <- read.csv("./data/pml-training.csv")
+testingDataRaw <- read.csv("./data/pml-testing.csv")
+dim(trainingDataRaw)
+dim(testingDataRaw)
+```
+
+## Data cleaning
+
+```{r}
+sum(complete.cases(trainingDataRaw))
+```
+
+Remove colums with missing values.
+```{r}
+trainingDataRaw <- trainingDataRaw[, colSums(is.na(trainingDataRaw)) == 0]
+testingDataRaw <- testingDataRaw[, colSums(is.na(testingDataRaw)) == 0]
+```
+
+Remove columns with low contribution to the accelerometer measurements.
+```{r}
+classe <- trainingDataRaw$classe
+trainRemove <- grepl("X|timestamp|window", names(trainingDataRaw))
+trainingDataRaw <- trainingDataRaw[, !trainRemove]
+trainCleaned <- trainingDataRaw[, sapply(trainingDataRaw, is.numeric)]
+trainCleaned$classe <- classe
+testRemove <- grepl("^X|timestamp|window", names(testingDataRaw))
+testingDataRaw <- testingDataRaw[, !testRemove]
+cleanedTestData <- testingDataRaw[, sapply(testingDataRaw, is.numeric)]
+
+dim(cleanedTestData)
+dim(trainCleaned)
+```
+We split the original training set, using 20% of it for **five fold cross validation** and 80% for pure training.  
+```{r}
+set.seed(11)
+inTrain <- createDataPartition(trainCleaned$classe, p=0.80, list = F)
+trainData <- trainCleaned[inTrain, ]
+testData <- trainCleaned[-inTrain, ]
+```
+
+##Predictive Model
+
+We'll use an ensemble of decision trees, a "random forest", as predictive model. 
+Decision trees are invariant under scaling and various other transformations of feature values, are robust to the inclusion of irrelevant features, and produces inspectable models.
+We ch to use an ensemble of decision trees to increase predictive accuracy. This ensemble provides attractive tradeoff between computational cost and predictive power. A random forest is also typically robust to outliers and automatically ranks features according to importance.
+```{r}
+controlRandomForest <- trainControl(method="cv", 5) #5-fold cross validation
+randomForestModel <- train(classe ~ ., data=trainData, method = "rf",trControl=controlRandomForest, ntree=200)
+randomForestModel
+```
+
+##Visualizations
+
+Correlation matrix in the training set
+
+```{r}
+corrPlot <- cor(trainData[, -length(names(trainData))])
+corrplot(corrPlot, method="color")
+```
+
+Decision tree 
+```{r}
+treeModel <- rpart(classe ~ ., data=trainData, method="class")
+prp(treeModel)
+```
+
+
+We validate the performance of the random forest model in the testing set.
+```{r}
+randomForestPrediction <- predict(randomForestModel, testData)
+confusionMatrix(testData$classe, randomForestPrediction)
+```
+ 
+```{r}
+accuracy <- postResample(randomForestPrediction, testData$classe)
+accuracy
+```
+
+```{r}
+outOfSampleError <- 1 - as.numeric(confusionMatrix(testData$classe, randomForestPrediction)$overall[1])
+outOfSampleError
+```
+
+The random forest model has an accuracy of 0.99 and an estimated out of sample error of 0.005.
+
+##Predictions on the Testing Set
+
+We apply the model to the downloaded testing set and report the results below. 
+```{r}
+result <- predict(randomForestModel, cleanedTestData[, -length(names(cleanedTestData))])
+result
+```
